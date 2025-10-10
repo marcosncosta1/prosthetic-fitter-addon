@@ -122,4 +122,8 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Acknowledgments
 
-Developed for prosthetic fitting applications in medical and assistive technology contexts.
+Developed as part of the VT1 (Virtual Technologies) project at ZHAW - Zurich University of Applied Sciences. This work contributes to prosthetic fitting applications in medical and assistive technology contexts.
+
+**Institution**: ZHAW School of Engineering - Center for Artificial Intelligenc (CAI). 
+**Program**: Virtual Technologies (VT1)  
+**Academic Year**: Fall 2025

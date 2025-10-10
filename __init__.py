@@ -2,11 +2,11 @@
 
 bl_info = {
     "name": "Prosthetic Fitter",
-    "author": "Marcos Costa",
+    "author": "Marcos Costa (ZHAW)",
     "version": (1, 0),
     "blender": (2, 80, 0),
     "location": "View3D > Sidebar > Fitter Tab",
-    "description": "Automates the fitting of a prosthetic to a hand scan.",
+    "description": "Automates the fitting of a prosthetic to a hand scan. Developed at ZHAW.",
     "category": "Object",
 }
 
