@@ -14,7 +14,7 @@ A Blender addon that automates the fitting of prosthetic devices to hand scans u
 
 1. Download or clone this repository
 2. In Blender, go to `Edit > Preferences > Add-ons`
-3. Click `Install...` and select the `prosthetic_fitter_addon` folder
+3. Click `Install...` and select the `prosthetic_fitter_addon` folder (make sure the folder is zipped/compressed)
 4. Enable the addon by checking the box next to "Prosthetic Fitter"
 
 ## Usage
