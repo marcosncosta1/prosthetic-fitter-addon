@@ -72,7 +72,7 @@ def calculate_and_apply_transform(prosthetic_obj, landmarks):
     # Calculate rotation to align the prosthetic's orientation to the hand's
     rot_diff = pros_right_vec.rotation_difference(hand_right_vec)
 
-    # 3. BUILD THE TRANSFORMATION MATRIX (THE CORE OF THE NEW LOGIC)
+    # 3. BUILD THE TRANSFORMATION MATRIX 
     # This process applies scale and rotation around the wrist center, not the object origin.
     
     # Start with a blank matrix
@@ -92,7 +92,7 @@ def calculate_and_apply_transform(prosthetic_obj, landmarks):
     
     print(f"Applied Wrist-Centric Transform: Scale:(XY:{scale_xy:.2f}, Z:{scale_z:.2f})")
 
-# --- (conform_socket function is unchanged) ---
+# --- Conform_socket function ---
 def conform_socket(prosthetic_obj, scan_obj):
     bpy.context.view_layer.objects.active = prosthetic_obj
     prosthetic_obj.select_set(True)
@@ -106,7 +106,7 @@ def conform_socket(prosthetic_obj, scan_obj):
     shrinkwrap_mod.offset = 0.003
     print(f"Successfully applied '{modifier_name}' modifier.")
 
-# --- THE MAIN CONTROLLER (UNCHANGED) ---
+# --- THE MAIN CONTROLLER  ---
 def run_fitting_process():
     try:
         scan_obj, prosthetic_obj = get_scene_objects()

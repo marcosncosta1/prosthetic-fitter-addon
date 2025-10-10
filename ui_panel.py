@@ -1,6 +1,4 @@
 import bpy
-
-# Import the main logic function from the other script
 from .prosthetic_fitter import run_fitting_process
 
 # --- OPERATORS ---
@@ -108,7 +106,7 @@ def update_offset(self, context):
 classes = (
     PROSTHETIC_OT_CreateLandmarks,
     PROSTHETIC_OT_FitObject,
-    PROSTHETIC_OT_ApplyFit, # Added the new operator
+    PROSTHETIC_OT_ApplyFit, 
     PROSTHETIC_PT_FittingPanel,
 )
 
