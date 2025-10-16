@@ -1,5 +1,6 @@
 import bpy
 from .prosthetic_fitter import run_fitting_process
+from bpy_extras.io_utils import ImportHelper
 
 # --- OPERATORS ---
 
@@ -54,6 +55,75 @@ class PROSTHETIC_OT_ApplyFit(bpy.types.Operator):
             self.report({'ERROR'}, "Could not find 'Prosthetic' object or 'SocketFit' modifier.")
             return {'CANCELLED'}
 
+# --- NEW: Import Operators ---
+class PROSTHETIC_OT_LoadHandScan(bpy.types.Operator, ImportHelper):
+    bl_idname = "prosthetic.load_hand_scan"
+    bl_label = "Load Hand Scan (.stl named 'hand_scan')"
+    filename_ext = ".stl"
+    filter_glob: bpy.props.StringProperty(
+        default="*.stl",
+        options={'HIDDEN'}
+    )
+
+    def execute(self, context):
+        import os
+        filepath = self.filepath
+        base = os.path.splitext(os.path.basename(filepath))[0]
+        ext = os.path.splitext(filepath)[1].lower()
+        if base != "hand_scan" or ext != ".stl":
+            self.report({'ERROR'}, "File must be named 'hand_scan.stl'.")
+            return {'CANCELLED'}
+        # Import STL
+        try:
+            before = set(bpy.data.objects)
+            bpy.ops.import_mesh.stl(filepath=filepath)
+            after = set(bpy.data.objects)
+            new_objs = list(after - before)
+            if not new_objs:
+                self.report({'ERROR'}, "No object imported from STL.")
+                return {'CANCELLED'}
+            imported_obj = new_objs[0]
+            imported_obj.name = "HandScan"
+            self.report({'INFO'}, "Imported hand scan as 'HandScan'.")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Import failed: {e}")
+            return {'CANCELLED'}
+
+class PROSTHETIC_OT_LoadProsthetic(bpy.types.Operator, ImportHelper):
+    bl_idname = "prosthetic.load_prosthetic"
+    bl_label = "Load Prosthetic (.stl named 'Prosthetic')"
+    filename_ext = ".stl"
+    filter_glob: bpy.props.StringProperty(
+        default="*.stl",
+        options={'HIDDEN'}
+    )
+
+    def execute(self, context):
+        import os
+        filepath = self.filepath
+        base = os.path.splitext(os.path.basename(filepath))[0]
+        ext = os.path.splitext(filepath)[1].lower()
+        if base != "Prosthetic" or ext != ".stl":
+            self.report({'ERROR'}, "File must be named 'Prosthetic.stl'.")
+            return {'CANCELLED'}
+        # Import STL
+        try:
+            before = set(bpy.data.objects)
+            bpy.ops.import_mesh.stl(filepath=filepath)
+            after = set(bpy.data.objects)
+            new_objs = list(after - before)
+            if not new_objs:
+                self.report({'ERROR'}, "No object imported from STL.")
+                return {'CANCELLED'}
+            imported_obj = new_objs[0]
+            imported_obj.name = "Prosthetic"
+            self.report({'INFO'}, "Imported prosthetic as 'Prosthetic'.")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Import failed: {e}")
+            return {'CANCELLED'}
+
 # --- THE UI PANEL CLASS ---
 
 class PROSTHETIC_PT_FittingPanel(bpy.types.Panel):
@@ -68,6 +138,13 @@ class PROSTHETIC_PT_FittingPanel(bpy.types.Panel):
         layout = self.layout
         scene = context.scene
 
+        # Step 0: Imports
+        box = layout.box()
+        box.label(text="Step 0: Load Models", icon='IMPORT')
+        row = box.row(align=True)
+        row.operator("prosthetic.load_hand_scan", icon='MESH_DATA')
+        row.operator("prosthetic.load_prosthetic", icon='MESH_CUBE')
+
         # Step 1: Setup
         box = layout.box()
         box.label(text="Step 1: Setup", icon='TOOL_SETTINGS')
@@ -81,7 +158,6 @@ class PROSTHETIC_PT_FittingPanel(bpy.types.Panel):
         # Conditional section that appears after the fit is run
         prosthetic_obj = bpy.data.objects.get("Prosthetic")
         if prosthetic_obj and "SocketFit" in prosthetic_obj.modifiers:
-            
             # Step 3: Adjustments
             box = layout.box()
             box.label(text="Step 3: Adjustments", icon='MODIFIER')
@@ -96,6 +172,7 @@ class PROSTHETIC_PT_FittingPanel(bpy.types.Panel):
 # --- CUSTOM PROPERTY & REGISTRATION ---
 
 # This function is triggered whenever the user changes the "socket_offset_mm" slider
+
 def update_offset(self, context):
     prosthetic_obj = bpy.data.objects.get("Prosthetic")
     if prosthetic_obj and "SocketFit" in prosthetic_obj.modifiers:
@@ -104,11 +181,14 @@ def update_offset(self, context):
 
 # A list of all our classes to register
 classes = (
+    PROSTHETIC_OT_LoadHandScan,
+    PROSTHETIC_OT_LoadProsthetic,
     PROSTHETIC_OT_CreateLandmarks,
     PROSTHETIC_OT_FitObject,
     PROSTHETIC_OT_ApplyFit, 
     PROSTHETIC_PT_FittingPanel,
 )
+
 
 def register():
     for cls in classes:
@@ -123,6 +203,7 @@ def register():
         unit='LENGTH',
         update=update_offset
     )
+
 
 def unregister():
     for cls in reversed(classes):
