@@ -1,8 +1,70 @@
 import bpy
+import importlib
+import sys
 from .prosthetic_fitter import run_fitting_process
 from bpy_extras.io_utils import ImportHelper
 
 # --- OPERATORS ---
+
+class PROSTHETIC_OT_LoadHandScan(bpy.types.Operator, ImportHelper):
+    bl_idname = "prosthetic.load_hand_scan"
+    bl_label = "Load Hand Scan STL"
+    bl_options = {'REGISTER', 'UNDO'}
+    filename_ext = ".stl"
+    filter_glob: bpy.props.StringProperty(default="*.stl", options={'HIDDEN'})
+
+    def execute(self, context):
+        try:
+            import os
+            base = os.path.splitext(os.path.basename(self.filepath))[0]
+            ext = os.path.splitext(self.filepath)[1].lower()
+            if base != "hand_scan" or ext != ".stl":
+                self.report({'ERROR'}, "File must be named 'hand_scan.stl'.")
+                return {'CANCELLED'}
+            before = set(bpy.data.objects)
+            bpy.ops.import_mesh.stl(filepath=self.filepath)
+            after = set(bpy.data.objects)
+            new_objs = list(after - before)
+            if not new_objs:
+                self.report({'ERROR'}, "No object imported from STL.")
+                return {'CANCELLED'}
+            imported_obj = new_objs[0]
+            imported_obj.name = "HandScan"
+            self.report({'INFO'}, f"Imported '{self.filepath}' as 'HandScan'.")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Import failed: {e}")
+            return {'CANCELLED'}
+
+class PROSTHETIC_OT_LoadProsthetic(bpy.types.Operator, ImportHelper):
+    bl_idname = "prosthetic.load_prosthetic"
+    bl_label = "Load Prosthetic STL"
+    bl_options = {'REGISTER', 'UNDO'}
+    filename_ext = ".stl"
+    filter_glob: bpy.props.StringProperty(default="*.stl", options={'HIDDEN'})
+
+    def execute(self, context):
+        try:
+            import os
+            base = os.path.splitext(os.path.basename(self.filepath))[0]
+            ext = os.path.splitext(self.filepath)[1].lower()
+            if base != "Prosthetic" or ext != ".stl":
+                self.report({'ERROR'}, "File must be named 'Prosthetic.stl'.")
+                return {'CANCELLED'}
+            before = set(bpy.data.objects)
+            bpy.ops.import_mesh.stl(filepath=self.filepath)
+            after = set(bpy.data.objects)
+            new_objs = list(after - before)
+            if not new_objs:
+                self.report({'ERROR'}, "No object imported from STL.")
+                return {'CANCELLED'}
+            imported_obj = new_objs[0]
+            imported_obj.name = "Prosthetic"
+            self.report({'INFO'}, f"Imported '{self.filepath}' as 'Prosthetic'.")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Import failed: {e}")
+            return {'CANCELLED'}
 
 class PROSTHETIC_OT_CreateLandmarks(bpy.types.Operator):
     """Creates the set of 6 required landmark empties"""
@@ -39,7 +101,6 @@ class PROSTHETIC_OT_FitObject(bpy.types.Operator):
         context.scene.socket_offset_mm = 3.0
         return {'FINISHED'}
 
-# NEW OPERATOR for applying the modifier
 class PROSTHETIC_OT_ApplyFit(bpy.types.Operator):
     """Applies the SocketFit modifier to make the change permanent"""
     bl_idname = "prosthetic.apply_fit"
@@ -48,84 +109,33 @@ class PROSTHETIC_OT_ApplyFit(bpy.types.Operator):
     def execute(self, context):
         prosthetic_obj = bpy.data.objects.get("Prosthetic")
         if prosthetic_obj and "SocketFit" in prosthetic_obj.modifiers:
+            for obj in context.selected_objects:
+                obj.select_set(False)
+            prosthetic_obj.select_set(True)
+            bpy.context.view_layer.objects.active = prosthetic_obj
             bpy.ops.object.modifier_apply(modifier="SocketFit")
-            self.report({'INFO'}, "Fit has been applied. Prosthetic is now an independent object.")
+            self.report({'INFO'}, "Fit has been applied.")
             return {'FINISHED'}
         else:
             self.report({'ERROR'}, "Could not find 'Prosthetic' object or 'SocketFit' modifier.")
             return {'CANCELLED'}
 
-# --- NEW: Import Operators ---
-class PROSTHETIC_OT_LoadHandScan(bpy.types.Operator, ImportHelper):
-    bl_idname = "prosthetic.load_hand_scan"
-    bl_label = "Load Hand Scan (.stl named 'hand_scan')"
-    filename_ext = ".stl"
-    filter_glob: bpy.props.StringProperty(
-        default="*.stl",
-        options={'HIDDEN'}
-    )
+# --- NEW RELOAD OPERATOR ---
+class PROSTHETIC_OT_ReloadAddon(bpy.types.Operator):
+    """Reloads the entire add-on to reflect script changes"""
+    bl_idname = "prosthetic.reload_addon"
+    bl_label = "Reload Add-on (Dev)"
 
     def execute(self, context):
-        import os
-        filepath = self.filepath
-        base = os.path.splitext(os.path.basename(filepath))[0]
-        ext = os.path.splitext(filepath)[1].lower()
-        if base != "hand_scan" or ext != ".stl":
-            self.report({'ERROR'}, "File must be named 'hand_scan.stl'.")
-            return {'CANCELLED'}
-        # Import STL
-        try:
-            before = set(bpy.data.objects)
-            bpy.ops.import_mesh.stl(filepath=filepath)
-            after = set(bpy.data.objects)
-            new_objs = list(after - before)
-            if not new_objs:
-                self.report({'ERROR'}, "No object imported from STL.")
-                return {'CANCELLED'}
-            imported_obj = new_objs[0]
-            imported_obj.name = "HandScan"
-            self.report({'INFO'}, "Imported hand scan as 'HandScan'.")
-            return {'FINISHED'}
-        except Exception as e:
-            self.report({'ERROR'}, f"Import failed: {e}")
-            return {'CANCELLED'}
+        addon_name = __package__
+        loaded_modules = [mod for name, mod in sys.modules.items() if name.startswith(addon_name)]
+        for mod in loaded_modules:
+            importlib.reload(mod)
+        self.report({'INFO'}, f"Reloaded add-on: {addon_name}")
+        return {'FINISHED'}
 
-class PROSTHETIC_OT_LoadProsthetic(bpy.types.Operator, ImportHelper):
-    bl_idname = "prosthetic.load_prosthetic"
-    bl_label = "Load Prosthetic (.stl named 'Prosthetic')"
-    filename_ext = ".stl"
-    filter_glob: bpy.props.StringProperty(
-        default="*.stl",
-        options={'HIDDEN'}
-    )
-
-    def execute(self, context):
-        import os
-        filepath = self.filepath
-        base = os.path.splitext(os.path.basename(filepath))[0]
-        ext = os.path.splitext(filepath)[1].lower()
-        if base != "Prosthetic" or ext != ".stl":
-            self.report({'ERROR'}, "File must be named 'Prosthetic.stl'.")
-            return {'CANCELLED'}
-        # Import STL
-        try:
-            before = set(bpy.data.objects)
-            bpy.ops.import_mesh.stl(filepath=filepath)
-            after = set(bpy.data.objects)
-            new_objs = list(after - before)
-            if not new_objs:
-                self.report({'ERROR'}, "No object imported from STL.")
-                return {'CANCELLED'}
-            imported_obj = new_objs[0]
-            imported_obj.name = "Prosthetic"
-            self.report({'INFO'}, "Imported prosthetic as 'Prosthetic'.")
-            return {'FINISHED'}
-        except Exception as e:
-            self.report({'ERROR'}, f"Import failed: {e}")
-            return {'CANCELLED'}
 
 # --- THE UI PANEL CLASS ---
-
 class PROSTHETIC_PT_FittingPanel(bpy.types.Panel):
     """Creates a Panel in the 3D View's Sidebar"""
     bl_label = "HandFit"
@@ -140,7 +150,7 @@ class PROSTHETIC_PT_FittingPanel(bpy.types.Panel):
 
         # Step 0: Imports
         box = layout.box()
-        box.label(text="Step 0: Load Models", icon='IMPORT')
+        box.label(text="Step 0: Load Models", icon='FILE_FOLDER')
         row = box.row(align=True)
         row.operator("prosthetic.load_hand_scan", icon='MESH_DATA')
         row.operator("prosthetic.load_prosthetic", icon='MESH_CUBE')
@@ -158,42 +168,45 @@ class PROSTHETIC_PT_FittingPanel(bpy.types.Panel):
         # Conditional section that appears after the fit is run
         prosthetic_obj = bpy.data.objects.get("Prosthetic")
         if prosthetic_obj and "SocketFit" in prosthetic_obj.modifiers:
-            # Step 3: Adjustments
             box = layout.box()
             box.label(text="Step 3: Adjustments", icon='MODIFIER')
-            # This now points to our custom millimeter property
             box.prop(scene, "socket_offset_mm", text="Socket Offset (mm)")
 
-            # Step 4: Finalize
             box = layout.box()
             box.label(text="Step 4: Finalize", icon='CHECKMARK')
             box.operator("prosthetic.apply_fit")
 
-# --- CUSTOM PROPERTY & REGISTRATION ---
+        # --- Developer Section ---
+        dev_box = layout.box()
+        dev_box.label(text="Developer Tools", icon='SCRIPTPLUGINS')
+        dev_box.operator("prosthetic.reload_addon")
 
-# This function is triggered whenever the user changes the "socket_offset_mm" slider
+# --- CUSTOM PROPERTY & REGISTRATION ---
 
 def update_offset(self, context):
     prosthetic_obj = bpy.data.objects.get("Prosthetic")
     if prosthetic_obj and "SocketFit" in prosthetic_obj.modifiers:
-        # Convert the millimeter value from the UI to meters for Blender
         prosthetic_obj.modifiers["SocketFit"].offset = context.scene.socket_offset_mm / 1000.0
 
-# A list of all our classes to register
 classes = (
     PROSTHETIC_OT_LoadHandScan,
     PROSTHETIC_OT_LoadProsthetic,
     PROSTHETIC_OT_CreateLandmarks,
     PROSTHETIC_OT_FitObject,
-    PROSTHETIC_OT_ApplyFit, 
+    PROSTHETIC_OT_ApplyFit,
+    PROSTHETIC_OT_ReloadAddon, # Added the reload operator
     PROSTHETIC_PT_FittingPanel,
 )
 
+def unregister_previous():
+    for cls in reversed(classes):
+        if hasattr(bpy.types, cls.__name__):
+            bpy.utils.unregister_class(cls)
 
 def register():
+    unregister_previous() # Helper for stable reloading
     for cls in classes:
         bpy.utils.register_class(cls)
-    # Define our custom property and link it to the update function
     bpy.types.Scene.socket_offset_mm = bpy.props.FloatProperty(
         name="Socket Offset",
         description="Gap for liner in millimeters",
@@ -204,9 +217,9 @@ def register():
         update=update_offset
     )
 
-
 def unregister():
     for cls in reversed(classes):
-        bpy.utils.unregister_class(cls)
-    # Delete our custom property when the add-on is disabled
-    del bpy.types.Scene.socket_offset_mm
+        if hasattr(bpy.types, cls.__name__):
+            bpy.utils.unregister_class(cls)
+    if hasattr(bpy.types.Scene, 'socket_offset_mm'):
+        del bpy.types.Scene.socket_offset_mm
