@@ -34,11 +34,10 @@ class PROSTHETIC_OT_FitObject(bpy.types.Operator):
 
     def execute(self, context):
         run_fitting_process()
-        # Set the initial value of our custom mm slider to match the script's default (3mm)
+        # Set the initial value of our custom mm slider
         context.scene.socket_offset_mm = 3.0
         return {'FINISHED'}
 
-# NEW OPERATOR for applying the modifier
 class PROSTHETIC_OT_ApplyFit(bpy.types.Operator):
     """Applies the SocketFit modifier to make the change permanent"""
     bl_idname = "prosthetic.apply_fit"
@@ -47,6 +46,8 @@ class PROSTHETIC_OT_ApplyFit(bpy.types.Operator):
     def execute(self, context):
         prosthetic_obj = bpy.data.objects.get("Prosthetic")
         if prosthetic_obj and "SocketFit" in prosthetic_obj.modifiers:
+            # Ensure the object is active for the operator
+            bpy.context.view_layer.objects.active = prosthetic_obj
             bpy.ops.object.modifier_apply(modifier="SocketFit")
             self.report({'INFO'}, "Fit has been applied. Prosthetic is now an independent object.")
             return {'FINISHED'}
@@ -82,10 +83,17 @@ class PROSTHETIC_PT_FittingPanel(bpy.types.Panel):
         prosthetic_obj = bpy.data.objects.get("Prosthetic")
         if prosthetic_obj and "SocketFit" in prosthetic_obj.modifiers:
             
+            # Get a reference to the modifier
+            modifier = prosthetic_obj.modifiers["SocketFit"]
+
             # Step 3: Adjustments
             box = layout.box()
             box.label(text="Step 3: Adjustments", icon='MODIFIER')
-            # This now points to our custom millimeter property
+            
+            # Checkbox to toggle the modifier on/off
+            box.prop(modifier, "show_viewport", text="Toggle Deformation")
+            
+            # Slider for the offset
             box.prop(scene, "socket_offset_mm", text="Socket Offset (mm)")
 
             # Step 4: Finalize
@@ -95,8 +103,8 @@ class PROSTHETIC_PT_FittingPanel(bpy.types.Panel):
 
 # --- CUSTOM PROPERTY & REGISTRATION ---
 
-# This function is triggered whenever the user changes the "socket_offset_mm" slider
 def update_offset(self, context):
+    """This function is triggered whenever the user changes the "socket_offset_mm" slider"""
     prosthetic_obj = bpy.data.objects.get("Prosthetic")
     if prosthetic_obj and "SocketFit" in prosthetic_obj.modifiers:
         # Convert the millimeter value from the UI to meters for Blender
@@ -111,6 +119,7 @@ classes = (
 )
 
 def register():
+    """This function is required by __init__.py to register the add-on"""
     for cls in classes:
         bpy.utils.register_class(cls)
     # Define our custom property and link it to the update function
@@ -125,6 +134,7 @@ def register():
     )
 
 def unregister():
+    """This function is required by __init__.py to unregister the add-on"""
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     # Delete our custom property when the add-on is disabled
