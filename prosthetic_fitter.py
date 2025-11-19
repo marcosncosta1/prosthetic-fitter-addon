@@ -103,7 +103,8 @@ def conform_socket(prosthetic_obj, scan_obj):
     shrinkwrap_mod = prosthetic_obj.modifiers.new(name=modifier_name, type='SHRINKWRAP')
     shrinkwrap_mod.target = scan_obj
     shrinkwrap_mod.vertex_group = "Socket_VG"
-    shrinkwrap_mod.offset = 0.003
+    # shrinkwrap_mod.offset = 0.003  original offset
+    shrinkwrap_mod.offset = bpy.context.scene.socket_offset_mm / 1000.0
     print(f"Successfully applied '{modifier_name}' modifier.")
 
 # --- THE MAIN CONTROLLER  ---
