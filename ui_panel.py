@@ -43,13 +43,22 @@ class PROSTHETIC_OT_ApplyFit(bpy.types.Operator):
     bl_idname = "prosthetic.apply_fit"
     bl_label = "Apply and Finalize Fit"
     def execute(self, context):
-        prosthetic_obj = bpy.data.objects.get("Prosthetic")
-        if prosthetic_obj and "SocketFit" in prosthetic_obj.modifiers:
-            bpy.ops.object.modifier_apply(modifier="SocketFit")
-            self.report({'INFO'}, "Fit has been applied. Prosthetic is now an independent object.")
+        filler_obj = bpy.data.objects.get("Socket_Filler")
+        proxy_obj = bpy.data.objects.get("HandScan_Proxy")
+        
+        if filler_obj and "Socket_Boolean" in filler_obj.modifiers:
+            # Apply the Boolean modifier
+            bpy.context.view_layer.objects.active = filler_obj
+            bpy.ops.object.modifier_apply(modifier="Socket_Boolean")
+            
+            # Clean up the proxy object
+            if proxy_obj:
+                bpy.data.objects.remove(proxy_obj, do_unlink=True)
+                
+            self.report({'INFO'}, "Fit applied. 'Socket_Filler' is now final. Proxy removed.")
             return {'FINISHED'}
         else:
-            self.report({'ERROR'}, "Could not find 'Prosthetic' object or 'SocketFit' modifier.")
+            self.report({'ERROR'}, "Could not find 'Socket_Filler' or its boolean modifier.")
             return {'CANCELLED'}
 
 class PROSTHETIC_OT_SelectSocket(bpy.types.Operator):
@@ -143,12 +152,14 @@ class PROSTHETIC_PT_FittingPanel(bpy.types.Panel):
         box.operator("prosthetic.create_landmarks")
         box.label(text="Step 2: Execution", icon='PLAY')
         box.operator("prosthetic.fit_object")
-        prosthetic_obj = bpy.data.objects.get("Prosthetic")
-        if prosthetic_obj and "SocketFit" in prosthetic_obj.modifiers:
-            modifier = prosthetic_obj.modifiers["SocketFit"]
+        
+        # Check for the new Socket_Filler object
+        filler_obj = bpy.data.objects.get("Socket_Filler")
+        if filler_obj and "Socket_Boolean" in filler_obj.modifiers:
+            modifier = filler_obj.modifiers["Socket_Boolean"]
             sub_box = box.box()
             sub_box.label(text="Step 3: Adjustments", icon='MODIFIER')
-            sub_box.prop(modifier, "show_viewport", text="Toggle Deformation")
+            sub_box.prop(modifier, "show_viewport", text="Toggle Cut")
             sub_box.prop(scene, "socket_offset_mm", text="Socket Offset (mm)")
             sub_box = box.box()
             sub_box.label(text="Step 4: Finalize", icon='CHECKMARK')
@@ -156,9 +167,19 @@ class PROSTHETIC_PT_FittingPanel(bpy.types.Panel):
 
 # --- CUSTOM PROPERTY & REGISTRATION ---
 def update_offset(self, context):
-    prosthetic_obj = bpy.data.objects.get("Prosthetic")
-    if prosthetic_obj and "SocketFit" in prosthetic_obj.modifiers:
-        prosthetic_obj.modifiers["SocketFit"].offset = context.scene.socket_offset_mm / 1000.0
+    # Updates the Displace modifier on the Proxy object
+    proxy_obj = bpy.data.objects.get("HandScan_Proxy")
+    if proxy_obj and "Offset_Displace" in proxy_obj.modifiers:
+        # Strength is in meters, so divide mm by 1000
+        # Note: Displace strength is a multiplier if a texture is used, but with mid_level=0 and no texture,
+        # it displaces by 'strength' along normal. 
+        # Wait, without texture, Displace modifier uses 'Midlevel' as base and 'Strength' as multiplier for... nothing?
+        # Actually, without a texture, Displace moves vertices along their normals by (Strength - Midlevel) * (TextureVal).
+        # If Texture is None, TextureVal is 1.0? No, usually it does nothing without texture or vertex group.
+        # Let's verify: In Blender, Displace with no texture displaces by 'Midlevel' if Strength is 1?
+        # Actually, standard way to "inflate" is Displace with Strength=Distance, Midlevel=0, and no texture?
+        # Let's assume standard behavior: Strength controls distance along normal if no texture is present.
+        proxy_obj.modifiers["Offset_Displace"].strength = context.scene.socket_offset_mm / 1000.0
 classes = (
     PROSTHETIC_OT_CreateLandmarks,
     PROSTHETIC_OT_FitObject,

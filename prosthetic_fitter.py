@@ -92,32 +92,159 @@ def calculate_and_apply_transform(prosthetic_obj, landmarks):
     
     print(f"Applied Wrist-Centric Transform: Scale:(XY:{scale_xy:.2f}, Z:{scale_z:.2f})")
 
-# --- Conform_socket function ---
-def conform_socket(prosthetic_obj, scan_obj):
+# --- Boolean Approach Functions ---
+
+def create_socket_filler(prosthetic_obj):
+    """
+    Creates a solid 'filler' object from the faces assigned to the 'InnerSocket' material.
+    """
+    print("Creating Socket Filler...")
+    
+    # Ensure we are in Object Mode to start
+    if bpy.context.object:
+        bpy.ops.object.mode_set(mode='OBJECT')
+        
+    # Deselect all
+    bpy.ops.object.select_all(action='DESELECT')
+    
+    # Select Prosthetic and make active
     bpy.context.view_layer.objects.active = prosthetic_obj
     prosthetic_obj.select_set(True)
-    modifier_name = "SocketFit"
-    for mod in prosthetic_obj.modifiers:
-        if mod.name == modifier_name:
-            prosthetic_obj.modifiers.remove(mod)
-    shrinkwrap_mod = prosthetic_obj.modifiers.new(name=modifier_name, type='SHRINKWRAP')
-    shrinkwrap_mod.target = scan_obj
-    shrinkwrap_mod.vertex_group = "Socket_VG"
-    # shrinkwrap_mod.offset = 0.003  original offset
-    shrinkwrap_mod.offset = bpy.context.scene.socket_offset_mm / 1000.0
-    print(f"Successfully applied '{modifier_name}' modifier.")
+    
+    # Enter Edit Mode
+    bpy.ops.object.mode_set(mode='EDIT')
+    
+    # Select faces with "InnerSocket" material
+    bpy.ops.mesh.select_all(action='DESELECT')
+    
+    try:
+        mat_idx = prosthetic_obj.material_slots.find("InnerSocket")
+        if mat_idx == -1:
+            raise ValueError("Material 'InnerSocket' not found on Prosthetic.")
+            
+        # We need to select faces by material index. 
+        # Using bmesh is more robust but for simple selection this works:
+        bpy.context.object.active_material_index = mat_idx
+        bpy.ops.object.material_slot_select()
+        
+    except Exception as e:
+        bpy.ops.object.mode_set(mode='OBJECT')
+        raise e
+
+    # Duplicate selected faces
+    bpy.ops.mesh.duplicate()
+    
+    # Separate to a new object
+    bpy.ops.mesh.separate(type='SELECTED')
+    
+    # Return to Object Mode
+    bpy.ops.object.mode_set(mode='OBJECT')
+    
+    # Identify the new object (it will be selected)
+    selected_objects = bpy.context.selected_objects
+    filler_obj = None
+    for obj in selected_objects:
+        if obj != prosthetic_obj:
+            filler_obj = obj
+            break
+            
+    if not filler_obj:
+        raise RuntimeError("Failed to create Socket Filler object.")
+        
+    # Rename and setup filler
+    filler_obj.name = "Socket_Filler"
+    
+    # Clean up the filler mesh (Cap holes to make it solid)
+    bpy.ops.object.select_all(action='DESELECT')
+    bpy.context.view_layer.objects.active = filler_obj
+    filler_obj.select_set(True)
+    
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    
+    # Fill holes (Cap the open end)
+    # Fills all edges, creating a solid volume
+    bpy.ops.mesh.fill_holes() 
+    
+    # Recalculate normals to be sure they point out
+    bpy.ops.mesh.normals_make_consistent(inside=False)
+    
+    bpy.ops.object.mode_set(mode='OBJECT')
+    
+    print(f"Created solid object: '{filler_obj.name}'")
+    return filler_obj
+
+
+def apply_boolean_fit(filler_obj, scan_obj):
+    """
+    Applies a Boolean Difference using a proxy of the scan object.
+    The proxy handles the offset via a Displace modifier.
+    """
+    print("Applying Boolean Fit...")
+    
+    # 1. Create a Proxy of the HandScan for the Boolean operation
+    proxy_name = "HandScan_Proxy"
+    
+    # Check if proxy already exists and delete it
+    if bpy.data.objects.get(proxy_name):
+        bpy.data.objects.remove(bpy.data.objects[proxy_name], do_unlink=True)
+        
+    # Duplicate HandScan
+    proxy_obj = scan_obj.copy()
+    proxy_obj.data = scan_obj.data.copy()
+    proxy_obj.name = proxy_name
+    bpy.context.collection.objects.link(proxy_obj)
+    
+    # Hide the proxy
+    proxy_obj.hide_viewport = True
+    proxy_obj.hide_render = True
+    
+    # 2. Add Displace Modifier to Proxy (for Offset/Liner Gap)
+    # We use a Displace modifier with no texture to push vertices along normals
+    displace_mod = proxy_obj.modifiers.new(name="Offset_Displace", type='DISPLACE')
+    displace_mod.mid_level = 0.0 # Absolute displacement
+    # Strength will be controlled by the scene property in the UI update function
+    displace_mod.strength = bpy.context.scene.socket_offset_mm / 1000.0 
+    
+    # 3. Add Boolean Modifier to Filler
+    bool_mod = filler_obj.modifiers.new(name="Socket_Boolean", type='BOOLEAN')
+    bool_mod.operation = 'DIFFERENCE'
+    bool_mod.object = proxy_obj
+    bool_mod.solver = 'FAST' # 'FAST' is often better for complex scans, 'EXACT' is more robust but slower
+    
+    print("Boolean modifier applied.")
+    return proxy_obj
+
 
 # --- THE MAIN CONTROLLER  ---
 def run_fitting_process():
     try:
         scan_obj, prosthetic_obj = get_scene_objects()
         print("Found HandScan and Prosthetic objects.")
+        
+        # Ensure Socket_VG logic is still valid or if we just need the material
+        # The new approach relies on the material "InnerSocket" existing.
+        # We can keep auto_create_socket_vg if it helps visualize, but it's not strictly needed for the boolean filler creation
+        # which selects by material. Let's keep it for backward compatibility/visuals.
         auto_create_socket_vg(prosthetic_obj)
+        
         landmarks = get_landmarks(scan_obj, prosthetic_obj)
         print("Found all required landmarks.")
+        
         calculate_and_apply_transform(prosthetic_obj, landmarks)
-        conform_socket(prosthetic_obj, scan_obj)
+        
+        # --- NEW BOOLEAN LOGIC ---
+        # 1. Create the filler object
+        filler_obj = create_socket_filler(prosthetic_obj)
+        
+        # 2. Apply the boolean cut
+        apply_boolean_fit(filler_obj, scan_obj)
+        
         print("\n--- Fitting Process Completed Successfully ---")
+        
     except ValueError as e:
         print(f"ERROR: {e}")
+        print("--- Fitting Process Aborted ---")
+    except RuntimeError as e:
+        print(f"RUNTIME ERROR: {e}")
         print("--- Fitting Process Aborted ---")
