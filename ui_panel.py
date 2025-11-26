@@ -151,40 +151,106 @@ class PROSTHETIC_OT_AssignSocketMaterial(bpy.types.Operator):
         return {'FINISHED'}
 
 
-# --- THE UI PANEL CLASS ---
-class PROSTHETIC_PT_FittingPanel(bpy.types.Panel):
-    bl_label = "HandFit"
-    bl_idname = "PROSTHETIC_PT_main_panel"
+class PROSTHETIC_PT_TrackerPanel(bpy.types.Panel):
+    """Section 1: Live prosthetic scale tracker."""
+
+    bl_label = "Prosthetic Scale Tracker"
+    bl_idname = "PROSTHETIC_PT_tracker_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'HandFit'
+
     def draw(self, context):
         layout = self.layout
         scene = context.scene
-        box = layout.box()
-        box.label(text="Master Model Setup", icon='PRESET')
-        box.label(text="Step 1: Make Your Selection (in Edit Mode)")
-        col = box.column(align=True)
+
+        tracker = getattr(scene, "prosthetic_scale_tracker", None)
+        if not tracker:
+            layout.label(text="Tracker unavailable. Reload add-on.", icon='ERROR')
+            return
+
+        prosthetic_fitter.ensure_tracker_defaults(tracker)
+
+        col = layout.column(align=True)
+        col.label(text=f"X: {tracker.scale_x_percent:.2f}% ({tracker.scale_x_factor:.4f}x)")
+        col.label(text=f"Y: {tracker.scale_y_percent:.2f}% ({tracker.scale_y_factor:.4f}x)")
+        col.label(text=f"Z: {tracker.scale_z_percent:.2f}% ({tracker.scale_z_factor:.4f}x)")
+
+        layout.separator()
+        baseline = layout.column()
+        baseline.label(text=f"Baseline wrist: {tracker.baseline_wrist_bu:.4f} BU")
+        baseline.label(text=f"Baseline palm:  {tracker.baseline_palm_bu:.4f} BU")
+
+        layout.separator()
+        layout.prop(scene, "prosthetic_tracker_baseline_percent", text="Manual Baseline (%)")
+        layout.operator("prosthetic.set_tracker_baseline", icon='FILE_REFRESH')
+
+        layout.separator()
+        layout.operator("prosthetic.apply_tracked_scale", icon='MOD_SIMPLEDEFORM')
+
+
+class PROSTHETIC_PT_MasterSetupPanel(bpy.types.Panel):
+    """Section 2: Prepare master prosthetic model."""
+
+    bl_label = "Master Model Setup"
+    bl_idname = "PROSTHETIC_PT_master_setup_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'HandFit'
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+
+        layout.label(text="Step 1: Make Your Selection (in Edit Mode)")
+        col = layout.column(align=True)
         col.label(text="Option A: Automatic (Recommended)")
         col.label(text="- Select one inner face, then click:")
         col.prop(scene, "selection_threshold", text="Threshold")
         col.operator("prosthetic.select_socket")
-        col = box.column(align=True)
+        col = layout.column(align=True)
         col.label(text="Option B: Manual")
         col.label(text="- Use 'C' (Circle Select) or other tools.")
-        box.label(text="Step 2: Assign Material")
-        box.operator("prosthetic.assign_socket_material")
+        layout.label(text="Step 2: Assign Material")
+        layout.operator("prosthetic.assign_socket_material")
+
+
+class PROSTHETIC_PT_WorkflowPanel(bpy.types.Panel):
+    """Section 3: Patient fitting workflow."""
+
+    bl_label = "Patient Fitting Workflow"
+    bl_idname = "PROSTHETIC_PT_workflow_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'HandFit'
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
 
         box = layout.box()
-        box.label(text="Patient Fitting Workflow", icon='HAND')
         box.label(text="Step 1: Pre-Fit Inspection", icon='VIEWZOOM')
         box.operator("prosthetic.create_socket_filler")
+        filler_controls = box.box()
+        filler_controls.label(text="Socket Filler Preview", icon='MESH_CYLINDER')
+
+        if hasattr(scene, "socket_filler_visible"):
+            filler_controls.prop(scene, "socket_filler_visible", text="Show Socket Filler")
+        else:
+            filler_controls.label(text="Reload add-on to access filler controls.", icon='INFO')
+
+        filler_obj = bpy.data.objects.get("Socket_Filler")
+        if filler_obj and hasattr(scene, "socket_filler_thickness_m"):
+            filler_controls.prop(scene, "socket_filler_thickness_m", text="Volume (m)")
+            filler_controls.prop(scene, "socket_filler_push_m", text="Height Adjust (m)")
+        else:
+            filler_controls.label(text="Create a socket filler to adjust settings.", icon='INFO')
 
         box.label(text="Step 2: Setup", icon='TOOL_SETTINGS')
         box.operator("prosthetic.create_landmarks")
         box.label(text="Step 3: Execution", icon='PLAY')
         box.operator("prosthetic.fit_object")
-        
+
         # Check for the new Socket_Filler object
         filler_obj = bpy.data.objects.get("Socket_Filler")
         if filler_obj and "Socket_Boolean" in filler_obj.modifiers:
@@ -210,7 +276,9 @@ classes = (
     PROSTHETIC_OT_ApplyFit,
     PROSTHETIC_OT_SelectSocket,
     PROSTHETIC_OT_AssignSocketMaterial,
-    PROSTHETIC_PT_FittingPanel,
+    PROSTHETIC_PT_TrackerPanel,
+    PROSTHETIC_PT_MasterSetupPanel,
+    PROSTHETIC_PT_WorkflowPanel,
 )
 def register():
     for cls in classes:

@@ -20,7 +20,7 @@ class ProstheticScaleTrackerProps(bpy.types.PropertyGroup):
     scale_z_percent: FloatProperty(name="Scale Z %", default=100.0, subtype='PERCENTAGE', precision=3)
 
 
-def _ensure_tracker_defaults(tracker: ProstheticScaleTrackerProps):
+def ensure_tracker_defaults(tracker: ProstheticScaleTrackerProps):
     """Guarantee the tracker has sane defaults before new values are written."""
     if tracker and not tracker.initialized:
         tracker.scale_x_percent = tracker.scale_y_percent = tracker.scale_z_percent = 100.0
@@ -35,7 +35,7 @@ def update_scale_tracker(scale_xy, scale_z, prosthetic_obj, wrist_dist, palm_len
     if not tracker:
         return
 
-    _ensure_tracker_defaults(tracker)
+    ensure_tracker_defaults(tracker)
 
     tracker.baseline_wrist_bu = prosthetic_obj.get("baseline_wrist_bu", wrist_dist)
     tracker.baseline_palm_bu = prosthetic_obj.get("baseline_palm_bu", palm_len)
@@ -81,7 +81,7 @@ def _sync_tracker_with_prosthetic(scene, force=False):
     if not tracker or not prosthetic_obj:
         return
 
-    _ensure_tracker_defaults(tracker)
+    ensure_tracker_defaults(tracker)
 
     baseline = prosthetic_obj.get("tracker_baseline_scale")
     if not baseline:
@@ -310,8 +310,88 @@ def create_socket_filler(prosthetic_obj):
     
     bpy.ops.object.mode_set(mode='OBJECT')
     
+    configure_socket_filler(filler_obj)
     print(f"Created solid object: '{filler_obj.name}'")
     return filler_obj
+
+
+def get_socket_filler():
+    return bpy.data.objects.get("Socket_Filler")
+
+
+def _ensure_socket_filler_modifiers(filler_obj):
+    """Guarantee the filler has the modifiers we expect for live tuning."""
+    solid = filler_obj.modifiers.get("SocketFiller_Solid")
+    if not solid:
+        solid = filler_obj.modifiers.new(name="SocketFiller_Solid", type='SOLIDIFY')
+        solid.use_even_offset = True
+        solid.offset = 1.0
+        solid.thickness = 0.003
+        solid.show_in_editmode = True
+
+    displace = filler_obj.modifiers.get("SocketFiller_Displace")
+    if not displace:
+        displace = filler_obj.modifiers.new(name="SocketFiller_Displace", type='DISPLACE')
+        displace.mid_level = 0.0
+        displace.strength = 0.0
+        displace.direction = 'NORMAL'
+
+    return solid, displace
+
+
+def configure_socket_filler(filler_obj, scene=None):
+    """Applies visibility and modifier settings from the current scene."""
+    if not filler_obj:
+        return
+
+    if scene is None:
+        scene = bpy.context.scene
+
+    solid, displace = _ensure_socket_filler_modifiers(filler_obj)
+
+    if scene:
+        thickness = getattr(
+            scene,
+            "socket_filler_thickness_m",
+            getattr(scene, "socket_filler_thickness_mm", 0.003),
+        )
+        push = getattr(
+            scene,
+            "socket_filler_push_m",
+            getattr(scene, "socket_filler_push_mm", 0.0),
+        )
+        visible = getattr(scene, "socket_filler_visible", False)
+
+        solid.thickness = thickness
+        displace.strength = push
+
+        filler_obj.hide_viewport = not visible
+        filler_obj.hide_render = not visible
+
+
+def update_socket_filler_visibility(self, context):
+    filler_obj = get_socket_filler()
+    if not filler_obj:
+        return
+    visible = context.scene.socket_filler_visible
+    filler_obj.hide_viewport = not visible
+    filler_obj.hide_render = not visible
+
+
+def update_socket_filler_thickness(self, context):
+    filler_obj = get_socket_filler()
+    if not filler_obj:
+        return
+    solid, _ = _ensure_socket_filler_modifiers(filler_obj)
+    solid.thickness = context.scene.socket_filler_thickness_m
+
+
+def update_socket_filler_push(self, context):
+    filler_obj = get_socket_filler()
+    if not filler_obj:
+        return
+    _, displace = _ensure_socket_filler_modifiers(filler_obj)
+    displace.strength = context.scene.socket_filler_push_m
 
 
 def apply_boolean_fit(filler_obj, scan_obj):
@@ -361,8 +441,11 @@ def create_socket_filler_only():
     the full fitting/boolean workflow. Intended for quick inspection.
     """
     scan_obj, prosthetic_obj = get_scene_objects()
+    scene = bpy.context.scene
     auto_create_socket_vg(prosthetic_obj)
     filler_obj = create_socket_filler(prosthetic_obj)
+    if hasattr(scene, "socket_filler_visible"):
+        scene.socket_filler_visible = True
 
     # Make the newly created filler active so users can work on it right away.
     bpy.ops.object.select_all(action='DESELECT')
@@ -405,43 +488,6 @@ class PROSTHETIC_OT_apply_tracked_scale(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class PROSTHETIC_PT_scale_tracker(bpy.types.Panel):
-    """Simple UI widget that keeps the user informed about the tracked scaling."""
-
-    bl_label = "Prosthetic Scale Tracker"
-    bl_category = "Prosthetic"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-
-    def draw(self, context):
-        layout = self.layout
-        tracker = getattr(context.scene, "prosthetic_scale_tracker", None)
-
-        if not tracker:
-            layout.label(text="Tracker unavailable.")
-            return
-
-        _ensure_tracker_defaults(tracker)
-
-        col = layout.column(align=True)
-        col.label(text=f"X: {tracker.scale_x_percent:.2f}% ({tracker.scale_x_factor:.4f}x)")
-        col.label(text=f"Y: {tracker.scale_y_percent:.2f}% ({tracker.scale_y_factor:.4f}x)")
-        col.label(text=f"Z: {tracker.scale_z_percent:.2f}% ({tracker.scale_z_factor:.4f}x)")
-
-        layout.separator()
-        baseline = layout.column()
-        baseline.label(text=f"Baseline wrist: {tracker.baseline_wrist_bu:.4f} BU")
-        baseline.label(text=f"Baseline palm:  {tracker.baseline_palm_bu:.4f} BU")
-
-        layout.separator()
-        baseline_controls = layout.column(align=True)
-        baseline_controls.prop(context.scene, "prosthetic_tracker_baseline_percent", text="Manual Baseline %")
-        baseline_controls.operator("prosthetic.set_tracker_baseline", icon='FILE_REFRESH')
-
-        layout.separator()
-        layout.operator("prosthetic.apply_tracked_scale", icon='MOD_SIMPLEDEFORM')
-
-
 class PROSTHETIC_OT_set_tracker_baseline(bpy.types.Operator):
     """Allows the user to start the tracker at a custom percentage scale."""
 
@@ -461,7 +507,7 @@ class PROSTHETIC_OT_set_tracker_baseline(bpy.types.Operator):
             self.report({'ERROR'}, "Could not find 'Prosthetic' object.")
             return {'CANCELLED'}
 
-        _ensure_tracker_defaults(tracker)
+        ensure_tracker_defaults(tracker)
 
         pct = context.scene.prosthetic_tracker_baseline_percent
         factor = pct / 100.0
@@ -511,7 +557,6 @@ classes = (
     ProstheticScaleTrackerProps,
     PROSTHETIC_OT_apply_tracked_scale,
     PROSTHETIC_OT_set_tracker_baseline,
-    PROSTHETIC_PT_scale_tracker,
 )
 
 
@@ -533,6 +578,36 @@ def register():
             subtype='PERCENTAGE'
         )
 
+    if not hasattr(bpy.types.Scene, "socket_filler_visible"):
+        bpy.types.Scene.socket_filler_visible = BoolProperty(
+            name="Show Socket Filler",
+            description="Toggle visibility of the preview filler mesh",
+            default=False,
+            update=update_socket_filler_visibility,
+        )
+
+    if not hasattr(bpy.types.Scene, "socket_filler_thickness_m"):
+        bpy.types.Scene.socket_filler_thickness_m = FloatProperty(
+            name="Filler Thickness",
+            description="Controls the extra volume added to the socket filler",
+            default=0.003,
+            min=0.0001,
+            precision=4,
+            unit='LENGTH',
+            update=update_socket_filler_thickness,
+        )
+
+    if not hasattr(bpy.types.Scene, "socket_filler_push_m"):
+        bpy.types.Scene.socket_filler_push_m = FloatProperty(
+            name="Filler Push",
+            description="Offsets the filler along its normals to tweak height/depth",
+            default=0.0,
+            min=-0.01,
+            precision=4,
+            unit='LENGTH',
+            update=update_socket_filler_push,
+        )
+
     _register_tracker_handler()
 
 
@@ -542,6 +617,14 @@ def unregister():
 
     if hasattr(bpy.types.Scene, "prosthetic_scale_tracker"):
         del bpy.types.Scene.prosthetic_scale_tracker
+
+    for attr in (
+        "socket_filler_visible",
+        "socket_filler_thickness_m",
+        "socket_filler_push_m",
+    ):
+        if hasattr(bpy.types.Scene, attr):
+            delattr(bpy.types.Scene, attr)
 
     _unregister_tracker_handler()
 
