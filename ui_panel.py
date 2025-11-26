@@ -1,6 +1,22 @@
 import bpy
-import bmesh  
-from .prosthetic_fitter import run_fitting_process
+import bmesh
+from . import prosthetic_fitter
+
+
+def _call_run_fitting_process():
+    """Wrapper so we don't break if the fitter module signature changes."""
+    if hasattr(prosthetic_fitter, "run_fitting_process"):
+        return prosthetic_fitter.run_fitting_process()
+    raise RuntimeError("prosthetic_fitter.run_fitting_process() is missing.")
+
+
+def _call_create_socket_filler_only():
+    """Optional helper: only available on newer fitter versions."""
+    if hasattr(prosthetic_fitter, "create_socket_filler_only"):
+        return prosthetic_fitter.create_socket_filler_only()
+    # Fall back to the legacy behavior: run the whole fitting process
+    # so users on older versions still get a filler created.
+    return _call_run_fitting_process()
 
 # --- OPERATORS ---
 
@@ -27,13 +43,25 @@ class PROSTHETIC_OT_CreateLandmarks(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class PROSTHETIC_OT_CreateSocketFiller(bpy.types.Operator):
+    bl_idname = "prosthetic.create_socket_filler"
+    bl_label = "Create/Show Socket Filler"
+    def execute(self, context):
+        try:
+            _call_create_socket_filler_only()
+            return {'FINISHED'}
+        except ValueError as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+
+
 class PROSTHETIC_OT_FitObject(bpy.types.Operator):
     bl_idname = "prosthetic.fit_object"
     bl_label = "Fit Prosthetic to Scan"
     def execute(self, context):
         try:
-            run_fitting_process()
-            context.scene.socket_offset_mm = 3.0
+            _call_run_fitting_process()
+            context.scene.socket_offset_m = 0.003
             return {'FINISHED'}
         except ValueError as e:
             self.report({'ERROR'}, str(e))
@@ -146,11 +174,15 @@ class PROSTHETIC_PT_FittingPanel(bpy.types.Panel):
         col.label(text="- Use 'C' (Circle Select) or other tools.")
         box.label(text="Step 2: Assign Material")
         box.operator("prosthetic.assign_socket_material")
+
         box = layout.box()
         box.label(text="Patient Fitting Workflow", icon='HAND')
-        box.label(text="Step 1: Setup", icon='TOOL_SETTINGS')
+        box.label(text="Step 1: Pre-Fit Inspection", icon='VIEWZOOM')
+        box.operator("prosthetic.create_socket_filler")
+
+        box.label(text="Step 2: Setup", icon='TOOL_SETTINGS')
         box.operator("prosthetic.create_landmarks")
-        box.label(text="Step 2: Execution", icon='PLAY')
+        box.label(text="Step 3: Execution", icon='PLAY')
         box.operator("prosthetic.fit_object")
         
         # Check for the new Socket_Filler object
@@ -158,11 +190,11 @@ class PROSTHETIC_PT_FittingPanel(bpy.types.Panel):
         if filler_obj and "Socket_Boolean" in filler_obj.modifiers:
             modifier = filler_obj.modifiers["Socket_Boolean"]
             sub_box = box.box()
-            sub_box.label(text="Step 3: Adjustments", icon='MODIFIER')
+            sub_box.label(text="Step 4: Adjustments", icon='MODIFIER')
             sub_box.prop(modifier, "show_viewport", text="Toggle Cut")
-            sub_box.prop(scene, "socket_offset_mm", text="Socket Offset (mm)")
+            sub_box.prop(scene, "socket_offset_m", text="Socket Offset (m)")
             sub_box = box.box()
-            sub_box.label(text="Step 4: Finalize", icon='CHECKMARK')
+            sub_box.label(text="Step 5: Finalize", icon='CHECKMARK')
             sub_box.operator("prosthetic.apply_fit")
 
 # --- CUSTOM PROPERTY & REGISTRATION ---
@@ -170,31 +202,23 @@ def update_offset(self, context):
     # Updates the Displace modifier on the Proxy object
     proxy_obj = bpy.data.objects.get("HandScan_Proxy")
     if proxy_obj and "Offset_Displace" in proxy_obj.modifiers:
-        # Strength is in meters, so divide mm by 1000
-        # Note: Displace strength is a multiplier if a texture is used, but with mid_level=0 and no texture,
-        # it displaces by 'strength' along normal. 
-        # Wait, without texture, Displace modifier uses 'Midlevel' as base and 'Strength' as multiplier for... nothing?
-        # Actually, without a texture, Displace moves vertices along their normals by (Strength - Midlevel) * (TextureVal).
-        # If Texture is None, TextureVal is 1.0? No, usually it does nothing without texture or vertex group.
-        # Let's verify: In Blender, Displace with no texture displaces by 'Midlevel' if Strength is 1?
-        # Actually, standard way to "inflate" is Displace with Strength=Distance, Midlevel=0, and no texture?
-        # Let's assume standard behavior: Strength controls distance along normal if no texture is present.
-        proxy_obj.modifiers["Offset_Displace"].strength = context.scene.socket_offset_mm / 1000.0
+        proxy_obj.modifiers["Offset_Displace"].strength = context.scene.socket_offset_m
 classes = (
     PROSTHETIC_OT_CreateLandmarks,
+    PROSTHETIC_OT_CreateSocketFiller,
     PROSTHETIC_OT_FitObject,
-    PROSTHETIC_OT_ApplyFit, 
-    PROSTHETIC_OT_SelectSocket,         
-    PROSTHETIC_OT_AssignSocketMaterial, 
+    PROSTHETIC_OT_ApplyFit,
+    PROSTHETIC_OT_SelectSocket,
+    PROSTHETIC_OT_AssignSocketMaterial,
     PROSTHETIC_PT_FittingPanel,
 )
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-    bpy.types.Scene.socket_offset_mm = bpy.props.FloatProperty(
+    bpy.types.Scene.socket_offset_m = bpy.props.FloatProperty(
         name="Socket Offset",
-        description="Gap for liner in millimeters",
-        default=3.0, min=0.0, max=10.0, unit='LENGTH',
+        description="Gap for liner in meters",
+        default=0.003, min=0.0, max=0.01, unit='LENGTH',
         update=update_offset
     )
     bpy.types.Scene.selection_threshold = bpy.props.FloatProperty(
@@ -205,7 +229,7 @@ def register():
 def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-    if hasattr(bpy.types.Scene, 'socket_offset_mm'):
-        del bpy.types.Scene.socket_offset_mm
+    if hasattr(bpy.types.Scene, 'socket_offset_m'):
+        del bpy.types.Scene.socket_offset_m
     if hasattr(bpy.types.Scene, 'selection_threshold'):
         del bpy.types.Scene.selection_threshold

@@ -1,6 +1,140 @@
 import bpy
 import mathutils
 from mathutils import Vector
+from bpy.props import BoolProperty, FloatProperty, PointerProperty
+
+_tracker_handler = None
+
+
+class ProstheticScaleTrackerProps(bpy.types.PropertyGroup):
+    """Holds the last-known scale factors so they can be reused."""
+
+    initialized: BoolProperty(name="Initialized", default=False)
+    baseline_wrist_bu: FloatProperty(name="Baseline Wrist (BU)", default=0.0, precision=4)
+    baseline_palm_bu: FloatProperty(name="Baseline Palm (BU)", default=0.0, precision=4)
+    scale_x_factor: FloatProperty(name="Scale X Factor", default=1.0, precision=6)
+    scale_y_factor: FloatProperty(name="Scale Y Factor", default=1.0, precision=6)
+    scale_z_factor: FloatProperty(name="Scale Z Factor", default=1.0, precision=6)
+    scale_x_percent: FloatProperty(name="Scale X %", default=100.0, subtype='PERCENTAGE', precision=3)
+    scale_y_percent: FloatProperty(name="Scale Y %", default=100.0, subtype='PERCENTAGE', precision=3)
+    scale_z_percent: FloatProperty(name="Scale Z %", default=100.0, subtype='PERCENTAGE', precision=3)
+
+
+def _ensure_tracker_defaults(tracker: ProstheticScaleTrackerProps):
+    """Guarantee the tracker has sane defaults before new values are written."""
+    if tracker and not tracker.initialized:
+        tracker.scale_x_percent = tracker.scale_y_percent = tracker.scale_z_percent = 100.0
+        tracker.scale_x_factor = tracker.scale_y_factor = tracker.scale_z_factor = 1.0
+        tracker.initialized = True
+
+
+def update_scale_tracker(scale_xy, scale_z, prosthetic_obj, wrist_dist, palm_len):
+    """Persist the latest scale factors so other parts can reuse them."""
+    scene = bpy.context.scene
+    tracker = getattr(scene, "prosthetic_scale_tracker", None)
+    if not tracker:
+        return
+
+    _ensure_tracker_defaults(tracker)
+
+    tracker.baseline_wrist_bu = prosthetic_obj.get("baseline_wrist_bu", wrist_dist)
+    tracker.baseline_palm_bu = prosthetic_obj.get("baseline_palm_bu", palm_len)
+    tracker.scale_x_factor = scale_xy
+    tracker.scale_y_factor = scale_xy
+    tracker.scale_z_factor = scale_z
+    tracker.scale_x_percent = scale_xy * 100.0
+    tracker.scale_y_percent = scale_xy * 100.0
+    tracker.scale_z_percent = scale_z * 100.0
+
+
+def record_prosthetic_baselines(prosthetic_obj, wrist_dist, palm_len):
+    """Store the original prosthetic measurements for future reference."""
+    if "baseline_wrist_bu" not in prosthetic_obj:
+        prosthetic_obj["baseline_wrist_bu"] = wrist_dist
+    if "baseline_palm_bu" not in prosthetic_obj:
+        prosthetic_obj["baseline_palm_bu"] = palm_len
+
+
+def _ensure_prosthetic_baseline_scale(prosthetic_obj, factor=1.0):
+    """
+    Store the object's baseline scale so tracker updates can compare against it.
+    Factor represents the percent (as 1.0 == 100%) we want the tracker to read
+    at the current scale.
+    """
+    if not prosthetic_obj:
+        return
+
+    eps = 1e-8
+    safe_factor = factor if abs(factor) > eps else 1.0
+    baseline = []
+    for axis, value in enumerate(prosthetic_obj.scale):
+        baseline_value = value / safe_factor if abs(safe_factor) > eps else value
+        baseline.append(max(baseline_value, eps))
+
+    prosthetic_obj["tracker_baseline_scale"] = tuple(baseline)
+
+
+def _sync_tracker_with_prosthetic(scene, force=False):
+    """Continuously reflects the Prosthetic object's current scale in the tracker."""
+    tracker = getattr(scene, "prosthetic_scale_tracker", None)
+    prosthetic_obj = bpy.data.objects.get("Prosthetic")
+    if not tracker or not prosthetic_obj:
+        return
+
+    _ensure_tracker_defaults(tracker)
+
+    baseline = prosthetic_obj.get("tracker_baseline_scale")
+    if not baseline:
+        _ensure_prosthetic_baseline_scale(prosthetic_obj)
+        baseline = prosthetic_obj.get("tracker_baseline_scale")
+
+    if not baseline:
+        return
+
+    eps = 1e-8
+    bx, by, bz = (baseline[0] or eps, baseline[1] or eps, baseline[2] or eps)
+    fx = prosthetic_obj.scale.x / bx
+    fy = prosthetic_obj.scale.y / by
+    fz = prosthetic_obj.scale.z / bz
+
+    # Avoid churning values if nothing changed
+    if not force:
+        if (
+            abs(tracker.scale_x_factor - fx) < 1e-4
+            and abs(tracker.scale_y_factor - fy) < 1e-4
+            and abs(tracker.scale_z_factor - fz) < 1e-4
+        ):
+            return
+
+    tracker.scale_x_factor = fx
+    tracker.scale_y_factor = fy
+    tracker.scale_z_factor = fz
+    tracker.scale_x_percent = fx * 100.0
+    tracker.scale_y_percent = fy * 100.0
+    tracker.scale_z_percent = fz * 100.0
+
+
+def _tracker_depsgraph_handler(scene, depsgraph):
+    """Blender handler hook to keep the tracker live."""
+    try:
+        _sync_tracker_with_prosthetic(scene)
+    except Exception as exc:  # pragma: no cover - handler safety
+        print(f"[HandFit] Tracker update failed: {exc}")
+
+
+def _register_tracker_handler():
+    global _tracker_handler
+    if _tracker_handler is not None:
+        return
+    bpy.app.handlers.depsgraph_update_post.append(_tracker_depsgraph_handler)
+    _tracker_handler = _tracker_depsgraph_handler
+
+
+def _unregister_tracker_handler():
+    global _tracker_handler
+    if _tracker_handler and _tracker_handler in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_tracker_handler)
+    _tracker_handler = None
 
 
 def get_scene_objects():
@@ -69,6 +203,9 @@ def calculate_and_apply_transform(prosthetic_obj, landmarks):
     pros_palm_len = (p_p - pros_wrist_center).length
     scale_z = hand_palm_len / pros_palm_len if pros_palm_len != 0 else 1.0
 
+    # Persist the original prosthetic measurements for later tracker usage
+    record_prosthetic_baselines(prosthetic_obj, pros_wrist_dist, pros_palm_len)
+
     # Calculate rotation to align the prosthetic's orientation to the hand's
     rot_diff = pros_right_vec.rotation_difference(hand_right_vec)
 
@@ -90,6 +227,8 @@ def calculate_and_apply_transform(prosthetic_obj, landmarks):
     # Apply the final combined transformation to the prosthetic
     prosthetic_obj.matrix_world = mat_final @ prosthetic_obj.matrix_world
     
+    update_scale_tracker(scale_xy, scale_z, prosthetic_obj, pros_wrist_dist, pros_palm_len)
+
     print(f"Applied Wrist-Centric Transform: Scale:(XY:{scale_xy:.2f}, Z:{scale_z:.2f})")
 
 # --- Boolean Approach Functions ---
@@ -189,7 +328,7 @@ def apply_boolean_fit(filler_obj, scan_obj):
     if bpy.data.objects.get(proxy_name):
         bpy.data.objects.remove(bpy.data.objects[proxy_name], do_unlink=True)
         
-    # Duplicate HandScan
+    # Duplicate HandScan 
     proxy_obj = scan_obj.copy()
     proxy_obj.data = scan_obj.data.copy()
     proxy_obj.name = proxy_name
@@ -214,6 +353,124 @@ def apply_boolean_fit(filler_obj, scan_obj):
     
     print("Boolean modifier applied.")
     return proxy_obj
+
+
+def create_socket_filler_only():
+    """
+    Convenience helper for the UI: build the filler mesh without running
+    the full fitting/boolean workflow. Intended for quick inspection.
+    """
+    scan_obj, prosthetic_obj = get_scene_objects()
+    auto_create_socket_vg(prosthetic_obj)
+    filler_obj = create_socket_filler(prosthetic_obj)
+
+    # Make the newly created filler active so users can work on it right away.
+    bpy.ops.object.select_all(action='DESELECT')
+    bpy.context.view_layer.objects.active = filler_obj
+    filler_obj.select_set(True)
+
+    print("Socket filler ready for inspection. Run full fit to boolean cut.")
+    return filler_obj
+
+
+class PROSTHETIC_OT_apply_tracked_scale(bpy.types.Operator):
+    """Applies the stored prosthetic scale factors to the current selection."""
+
+    bl_idname = "prosthetic.apply_tracked_scale"
+    bl_label = "Match Selected To Tracker"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        tracker = getattr(context.scene, "prosthetic_scale_tracker", None)
+
+        if not tracker or not tracker.initialized:
+            self.report({'WARNING'}, "Tracker has no data yet. Run the fitting process first.")
+            return {'CANCELLED'}
+
+        targets = [
+            obj for obj in context.selected_objects
+            if obj.type in {'MESH', 'CURVE', 'SURFACE', 'FONT', 'META'} and obj.name != "Prosthetic"
+        ]
+
+        if not targets:
+            self.report({'WARNING'}, "Select at least one non-prosthetic object to scale.")
+            return {'CANCELLED'}
+
+        for obj in targets:
+            obj.scale.x *= tracker.scale_x_factor
+            obj.scale.y *= tracker.scale_y_factor
+            obj.scale.z *= tracker.scale_z_factor
+
+        self.report({'INFO'}, f"Applied tracked scale to {len(targets)} object(s).")
+        return {'FINISHED'}
+
+
+class PROSTHETIC_PT_scale_tracker(bpy.types.Panel):
+    """Simple UI widget that keeps the user informed about the tracked scaling."""
+
+    bl_label = "Prosthetic Scale Tracker"
+    bl_category = "Prosthetic"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+
+    def draw(self, context):
+        layout = self.layout
+        tracker = getattr(context.scene, "prosthetic_scale_tracker", None)
+
+        if not tracker:
+            layout.label(text="Tracker unavailable.")
+            return
+
+        _ensure_tracker_defaults(tracker)
+
+        col = layout.column(align=True)
+        col.label(text=f"X: {tracker.scale_x_percent:.2f}% ({tracker.scale_x_factor:.4f}x)")
+        col.label(text=f"Y: {tracker.scale_y_percent:.2f}% ({tracker.scale_y_factor:.4f}x)")
+        col.label(text=f"Z: {tracker.scale_z_percent:.2f}% ({tracker.scale_z_factor:.4f}x)")
+
+        layout.separator()
+        baseline = layout.column()
+        baseline.label(text=f"Baseline wrist: {tracker.baseline_wrist_bu:.4f} BU")
+        baseline.label(text=f"Baseline palm:  {tracker.baseline_palm_bu:.4f} BU")
+
+        layout.separator()
+        baseline_controls = layout.column(align=True)
+        baseline_controls.prop(context.scene, "prosthetic_tracker_baseline_percent", text="Manual Baseline %")
+        baseline_controls.operator("prosthetic.set_tracker_baseline", icon='FILE_REFRESH')
+
+        layout.separator()
+        layout.operator("prosthetic.apply_tracked_scale", icon='MOD_SIMPLEDEFORM')
+
+
+class PROSTHETIC_OT_set_tracker_baseline(bpy.types.Operator):
+    """Allows the user to start the tracker at a custom percentage scale."""
+
+    bl_idname = "prosthetic.set_tracker_baseline"
+    bl_label = "Apply Manual Baseline"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        tracker = getattr(context.scene, "prosthetic_scale_tracker", None)
+
+        if not tracker:
+            self.report({'ERROR'}, "Tracker data missing.")
+            return {'CANCELLED'}
+
+        prosthetic_obj = bpy.data.objects.get("Prosthetic")
+        if not prosthetic_obj:
+            self.report({'ERROR'}, "Could not find 'Prosthetic' object.")
+            return {'CANCELLED'}
+
+        _ensure_tracker_defaults(tracker)
+
+        pct = context.scene.prosthetic_tracker_baseline_percent
+        factor = pct / 100.0
+
+        _ensure_prosthetic_baseline_scale(prosthetic_obj, factor)
+        _sync_tracker_with_prosthetic(context.scene, force=True)
+
+        self.report({'INFO'}, f"Tracker baseline set to {pct:.2f}%")
+        return {'FINISHED'}
 
 
 # --- THE MAIN CONTROLLER  ---
@@ -248,3 +505,49 @@ def run_fitting_process():
     except RuntimeError as e:
         print(f"RUNTIME ERROR: {e}")
         print("--- Fitting Process Aborted ---")
+
+
+classes = (
+    ProstheticScaleTrackerProps,
+    PROSTHETIC_OT_apply_tracked_scale,
+    PROSTHETIC_OT_set_tracker_baseline,
+    PROSTHETIC_PT_scale_tracker,
+)
+
+
+def register():
+    for cls in classes:
+        bpy.utils.register_class(cls)
+
+    if not hasattr(bpy.types.Scene, "prosthetic_scale_tracker"):
+        bpy.types.Scene.prosthetic_scale_tracker = PointerProperty(type=ProstheticScaleTrackerProps)
+
+    if not hasattr(bpy.types.Scene, "prosthetic_tracker_baseline_percent"):
+        bpy.types.Scene.prosthetic_tracker_baseline_percent = FloatProperty(
+            name="Tracker Baseline %",
+            description="Manual starting percentage for the tracker",
+            default=100.0,
+            min=1.0,
+            max=400.0,
+            precision=2,
+            subtype='PERCENTAGE'
+        )
+
+    _register_tracker_handler()
+
+
+def unregister():
+    if hasattr(bpy.types.Scene, "prosthetic_tracker_baseline_percent"):
+        del bpy.types.Scene.prosthetic_tracker_baseline_percent
+
+    if hasattr(bpy.types.Scene, "prosthetic_scale_tracker"):
+        del bpy.types.Scene.prosthetic_scale_tracker
+
+    _unregister_tracker_handler()
+
+    for cls in reversed(classes):
+        bpy.utils.unregister_class(cls)
+
+
+if __name__ == "__main__":
+    register()

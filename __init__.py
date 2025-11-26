@@ -12,11 +12,23 @@ bl_info = {
 from . import prosthetic_fitter
 from . import ui_panel
 
+
+def _safe_call(module, func_name):
+    func = getattr(module, func_name, None)
+    if func is None:
+        print(f"[HandFit] WARNING: '{module.__name__}' has no attribute '{func_name}'.")
+        return
+    func()
+
+
 def register():
-    ui_panel.register()
+    _safe_call(prosthetic_fitter, "register")
+    _safe_call(ui_panel, "register")
+
 
 def unregister():
-    ui_panel.unregister()
+    _safe_call(ui_panel, "unregister")
+    _safe_call(prosthetic_fitter, "unregister")
 
 if __name__ == "__main__":
     register()
