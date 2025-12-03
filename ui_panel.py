@@ -173,7 +173,7 @@ def register():
     bpy.types.Scene.socket_offset_mm = bpy.props.FloatProperty(
         name="Socket Offset",
         description="Gap for liner in millimeters",
-        default=3.0, min=0.0, max=10.0, unit='LENGTH',
+        default=3.0, min=0.0, max=50.0, soft_max=30.0, #unit='LENGTH',
         update=update_offset
     )
     bpy.types.Scene.selection_threshold = bpy.props.FloatProperty(

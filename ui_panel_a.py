@@ -128,7 +128,7 @@ def register():
         description="Gap for liner in millimeters",
         default=3.0,
         min=0.0,
-        max=10.0,
+        max=100.0,
         unit='LENGTH',
         update=update_offset
     )
