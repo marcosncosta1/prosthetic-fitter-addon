@@ -7,8 +7,9 @@ A Blender addon that automates the fitting of prosthetic devices to hand scans u
 - **Automatic Landmark Creation**: Creates 6 required landmark empties for hand and prosthetic alignment
 - **Wrist-Centric Alignment**: Aligns prosthetic to hand scan based on wrist landmarks and palm orientation
 - **Socket Conforming**: Uses Shrinkwrap modifier to conform the prosthetic socket to the hand geometry
+- **Dimension-Aware Scaling**: Tracks wrist width and palm length from landmarks to automatically scale the prosthetic to each patient's anatomy (separate XY and Z scaling)
 - **Interactive Adjustments**: Real-time socket offset adjustment with millimeter precision
-- **Professional UI**: Clean, step-by-step interface in Blender's 3D View sidebar
+- **Professional UI**: Clean, step-by-step interface in Blender's 3D View sidebar (`HandFit` tab)
 
 ## Installation
 
@@ -27,6 +28,8 @@ Before using the addon, ensure your Blender scene contains:
 2. **Prosthetic object**: The prosthetic device to be fitted
 3. **InnerSocket material**: The prosthetic must have a material named "InnerSocket" for the socket area
 
+You access all controls through the `HandFit` panel in the 3D View sidebar (`N` key) under the **HandFit** tab.
+
 ### Step-by-Step Process
 
 1. **Setup** (Step 1):
@@ -35,8 +38,8 @@ Before using the addon, ensure your Blender scene contains:
 
 2. **Position Landmarks** (Manual):
    - Move the landmark empties to their correct positions:
-     - `Hand_Wrist_L` and `Hand_Wrist_R`: Left and right wrist points
-     - `Hand_Palm`: Palm center point
+     - `Hand_Wrist_L` and `Hand_Wrist_R`: Left and right wrist points (define wrist width)
+     - `Hand_Palm`: Palm center point (defines palm length / forward direction)
      - `Prosthetic_Wrist_L` and `Prosthetic_Wrist_R`: Corresponding prosthetic wrist points
      - `Prosthetic_Palm`: Corresponding prosthetic palm point
 
@@ -69,6 +72,8 @@ The addon uses a wrist-centric alignment approach:
    - Z scale based on palm length ratio
 3. **Rotation Calculation**: Aligns prosthetic orientation to hand orientation
 4. **Transformation Matrix**: Applies scale and rotation around the wrist center, not object origin
+
+In practice, this means the three hand landmarks (`Hand_Wrist_L`, `Hand_Wrist_R`, `Hand_Palm`) act as a compact **dimension tracking system**, encoding wrist width and palm length so that each prosthetic is automatically scaled to the patient's anatomy.
 
 ### Socket Conforming
 
