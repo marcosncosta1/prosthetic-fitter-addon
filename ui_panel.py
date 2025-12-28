@@ -1,6 +1,7 @@
 import bpy
-import bmesh  
-from .prosthetic_fitter import run_fitting_process
+import bmesh
+from mathutils import Vector
+from . import prosthetic_fitter
 
 # --- OPERATORS ---
 
@@ -32,8 +33,9 @@ class PROSTHETIC_OT_FitObject(bpy.types.Operator):
     bl_label = "Fit Prosthetic to Scan"
     def execute(self, context):
         try:
-            run_fitting_process()
+            prosthetic_fitter.run_fitting_process()
             context.scene.socket_offset_mm = 3.0
+            
             return {'FINISHED'}
         except ValueError as e:
             self.report({'ERROR'}, str(e))
@@ -215,53 +217,117 @@ class PROSTHETIC_OT_AssignSocketMaterial(bpy.types.Operator):
         self.report({'INFO'}, f"Assigned 'InnerSocket' to {len(selected_faces)} faces.")
         return {'FINISHED'}
 
+# --- THE UI PANEL CLASSES (NOW SEPARATED) ---
 
-# --- THE UI PANEL CLASS ---
-class PROSTHETIC_PT_FittingPanel(bpy.types.Panel):
-    bl_label = "HandFit"
-    bl_idname = "PROSTHETIC_PT_main_panel"
+# 1. TRACKER PANEL
+class PROSTHETIC_PT_TrackerPanel(bpy.types.Panel):
+    """Section 1: Live prosthetic scale tracker."""
+
+    bl_label = "Prosthetic Scale Tracker"
+    bl_idname = "PROSTHETIC_PT_tracker_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'HandFit'
+
     def draw(self, context):
         layout = self.layout
         scene = context.scene
+
+        tracker = getattr(scene, "prosthetic_scale_tracker", None)
+        if not tracker:
+            layout.label(text="Tracker unavailable. Reload add-on.", icon='ERROR')
+            return
+        # Do not mutate tracker from draw; just read
+        prosthetic_fitter.ensure_tracker_defaults(tracker, mutate=False)
+
+        col = layout.column(align=True)
+        col.label(text=f"X: {tracker.scale_x_percent:.2f}% ({tracker.scale_x_factor:.4f}x)")
+        col.label(text=f"Y: {tracker.scale_y_percent:.2f}% ({tracker.scale_y_factor:.4f}x)")
+        col.label(text=f"Z: {tracker.scale_z_percent:.2f}% ({tracker.scale_z_factor:.4f}x)")
+
+        layout.separator()
+        baseline = layout.column()
+        baseline.label(text=f"Baseline wrist: {tracker.baseline_wrist_bu:.4f} BU")
+        baseline.label(text=f"Baseline palm:  {tracker.baseline_palm_bu:.4f} BU")
+
+        layout.separator()
+        layout.prop(scene, "prosthetic_tracker_baseline_percent", text="Manual Baseline (%)")
+        layout.operator("prosthetic.set_tracker_baseline", icon='FILE_REFRESH')
+
+        layout.separator()
+        layout.operator("prosthetic.apply_tracked_scale", icon='MOD_SIMPLEDEFORM')
+
+
+# 2. MASTER MODEL SETUP PANEL
+class PROSTHETIC_PT_MasterSetupPanel(bpy.types.Panel):
+    bl_label = "Master Model Setup"
+    bl_idname = "PROSTHETIC_PT_master_setup_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'HandFit'
+    
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        
         box = layout.box()
-        box.label(text="Master Model Setup", icon='PRESET')
-        box.label(text="Step 1: Make Your Selection (in Edit Mode)")
+        box.label(text="Step 1: Define Inner Socket Area", icon='HAND')
+        
         col = box.column(align=True)
         col.label(text="Option A: Automatic (Recommended)")
         col.label(text="- Select one inner face, then click:")
         col.prop(scene, "selection_threshold", text="Threshold")
-        col.operator("prosthetic.select_socket")
+        col.operator(PROSTHETIC_OT_SelectSocket.bl_idname)
+        
         col = box.column(align=True)
         col.label(text="Option B: Manual")
         col.label(text="- Use 'C' (Circle Select) or other tools.")
-        box.label(text="Step 2: Assign Material")
-        box.operator("prosthetic.assign_socket_material")
+        
+        box.separator()
+        box.label(text="Step 2: Assign Material", icon='MATERIAL')
+        box.operator(PROSTHETIC_OT_AssignSocketMaterial.bl_idname)
+
+# 3. WORKFLOW PANEL
+class PROSTHETIC_PT_WorkflowPanel(bpy.types.Panel):
+    bl_label = "Patient Fitting Workflow"
+    bl_idname = "PROSTHETIC_PT_workflow_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'HandFit'
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+
         box = layout.box()
-        box.label(text="Patient Fitting Workflow", icon='HAND')
         box.label(text="Step 1: Setup", icon='TOOL_SETTINGS')
-        box.operator("prosthetic.create_landmarks")
+        box.operator(PROSTHETIC_OT_CreateLandmarks.bl_idname)
+
+        box = layout.box()
         box.label(text="Step 2: Execution", icon='PLAY')
-        box.operator("prosthetic.fit_object")
+        box.operator(PROSTHETIC_OT_FitObject.bl_idname)
+
         prosthetic_obj = bpy.data.objects.get("Prosthetic")
         if prosthetic_obj and "SocketFit" in prosthetic_obj.modifiers:
             modifier = prosthetic_obj.modifiers["SocketFit"]
-            sub_box = box.box()
+            
+            sub_box = layout.box()
             sub_box.label(text="Step 3: Adjustments", icon='MODIFIER')
             sub_box.prop(modifier, "show_viewport", text="Toggle Deformation")
             sub_box.prop(scene, "socket_offset_mm", text="Socket Offset (mm)")
-            sub_box = box.box()
+
+            sub_box = layout.box()
             sub_box.label(text="Step 4: Finalize", icon='CHECKMARK')
-            sub_box.operator("prosthetic.apply_fit", text="Apply Fit On Prosthetic")
-            sub_box.operator("prosthetic.bake_fit_to_new_object", text="Create Fitted Copy")
+            sub_box.operator(PROSTHETIC_OT_ApplyFit.bl_idname, text="Apply Fit On Prosthetic")
+            sub_box.operator(PROSTHETIC_OT_BakeFitToNewObject.bl_idname, text="Create Fitted Copy")
+
 
 # --- CUSTOM PROPERTY & REGISTRATION ---
 def update_offset(self, context):
     prosthetic_obj = bpy.data.objects.get("Prosthetic")
     if prosthetic_obj and "SocketFit" in prosthetic_obj.modifiers:
         prosthetic_obj.modifiers["SocketFit"].offset = context.scene.socket_offset_mm / 1000.0
+
 classes = (
     PROSTHETIC_OT_CreateLandmarks,
     PROSTHETIC_OT_FitObject,
@@ -269,15 +335,22 @@ classes = (
     PROSTHETIC_OT_BakeFitToNewObject,
     PROSTHETIC_OT_SelectSocket,         
     PROSTHETIC_OT_AssignSocketMaterial, 
-    PROSTHETIC_PT_FittingPanel,
+    PROSTHETIC_PT_TrackerPanel,           
+    PROSTHETIC_PT_MasterSetupPanel,       
+    PROSTHETIC_PT_WorkflowPanel,         
 )
+
 def register():
+    bpy.utils.register_class(prosthetic_fitter.ProstheticScaleTrackerProps)
     for cls in classes:
         bpy.utils.register_class(cls)
+
+    bpy.types.Scene.prosthetic_scale_tracker = bpy.props.PointerProperty(type=prosthetic_fitter.ProstheticScaleTrackerProps)
+
     bpy.types.Scene.socket_offset_mm = bpy.props.FloatProperty(
         name="Socket Offset",
         description="Gap for liner in millimeters",
-        default=3.0, min=0.0, max=1000000.0, soft_max=1000.0, #unit='LENGTH',
+        default=3.0, min=0.0, max=1000000.0, soft_max=1000.0,
         update=update_offset
     )
     bpy.types.Scene.selection_threshold = bpy.props.FloatProperty(
@@ -285,10 +358,22 @@ def register():
         description="Angle to use for 'Select Similar by Normal'",
         default=0.1, min=0.0, max=1.0
     )
+    bpy.types.Scene.prosthetic_tracker_baseline_percent = bpy.props.FloatProperty(
+        name="Baseline %", description="Original prosthetic wrist width as a percentage of target", default=100.0, precision=1, subtype='PERCENTAGE'
+    )
+    prosthetic_fitter._register_tracker_handler()
+    
 def unregister():
+    prosthetic_fitter._unregister_tracker_handler()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
+    if hasattr(bpy.types.Scene, "prosthetic_scale_tracker"):
+        del bpy.types.Scene.prosthetic_scale_tracker
     if hasattr(bpy.types.Scene, 'socket_offset_mm'):
         del bpy.types.Scene.socket_offset_mm
     if hasattr(bpy.types.Scene, 'selection_threshold'):
         del bpy.types.Scene.selection_threshold
+    if hasattr(bpy.types.Scene, 'prosthetic_tracker_baseline_percent'):
+        del bpy.types.Scene.prosthetic_tracker_baseline_percent
+    bpy.utils.unregister_class(prosthetic_fitter.ProstheticScaleTrackerProps)
+   

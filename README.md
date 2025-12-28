@@ -7,6 +7,7 @@ A Blender addon that automates the fitting of prosthetic devices to hand scans u
 - **Automatic Landmark Creation**: Creates 6 required landmark empties for hand and prosthetic alignment
 - **Wrist-Centric Alignment**: Aligns prosthetic to hand scan based on wrist landmarks and palm orientation
 - **Socket Conforming**: Uses Shrinkwrap modifier to conform the prosthetic socket to the hand geometry
+- **Dimension-Aware Scaling**: Tracks wrist width and palm length from landmarks to automatically scale the prosthetic to each patient's anatomy (separate XY and Z scaling)
 - **Interactive Adjustments**: Real-time socket offset adjustment with millimeter precision
 - **Professional UI**: Clean, step-by-step interface in Blender's 3D View sidebar
 
