@@ -178,10 +178,15 @@ def auto_create_socket_vg(prosthetic_obj):
     print(f"Automatically created and assigned '{vg_name}' vertex group.")
 
 
-def calculate_and_apply_transform(prosthetic_obj, landmarks):
+def calculate_and_apply_transform(prosthetic_obj, landmarks, wrist_offset_mm=3.0):
     """
     Calculates and applies transformations by anchoring the prosthetic's wrist
-    to the hand's wrist, ensuring the wrist landmarks align perfectly.
+    to the hand's wrist, with an optional offset for clearance.
+
+    Args:
+        prosthetic_obj: The prosthetic object to transform
+        landmarks: Dictionary of landmark positions
+        wrist_offset_mm: Gap in mm to add on each side of wrist (default 3mm = 6mm total width increase)
     """
     # Isolate landmark vectors
     h_wl, h_wr, h_p = landmarks["Hand_Wrist_L"], landmarks["Hand_Wrist_R"], landmarks["Hand_Palm"]
@@ -190,18 +195,24 @@ def calculate_and_apply_transform(prosthetic_obj, landmarks):
     # 1. DEFINE WRIST CENTERS AND ORIENTATION VECTORS
     hand_wrist_center = (h_wl + h_wr) / 2.0
     pros_wrist_center = (p_wl + p_wr) / 2.0
-    
+
     hand_right_vec = (h_wr - h_wl).normalized()
     hand_fwd_vec = (h_p - hand_wrist_center).normalized()
-    
+
     pros_right_vec = (p_wr - p_wl).normalized()
     pros_fwd_vec = (p_p - pros_wrist_center).normalized()
 
     # 2. CALCULATE SCALE AND ROTATION
-    # XY scale is based on wrist width
+    # XY scale is based on wrist width + offset (to create clearance)
     hand_wrist_dist = (h_wr - h_wl).length
+
+    # Add offset: 2 * wrist_offset_mm (one on each side)
+    # Convert mm to Blender units (assuming 1 BU = 1mm with scale factor 1000)
+    wrist_offset_bu = (wrist_offset_mm * 2.0) / 1000.0  # Total offset for both sides
+    target_wrist_dist = hand_wrist_dist + wrist_offset_bu
+
     pros_wrist_dist = (p_wr - p_wl).length
-    scale_xy = hand_wrist_dist / pros_wrist_dist if pros_wrist_dist != 0 else 1.0
+    scale_xy = target_wrist_dist / pros_wrist_dist if pros_wrist_dist != 0 else 1.0
 
     # Z scale is based on palm length
     hand_palm_len = (h_p - hand_wrist_center).length
@@ -231,10 +242,11 @@ def calculate_and_apply_transform(prosthetic_obj, landmarks):
     
     # Apply the final combined transformation to the prosthetic
     prosthetic_obj.matrix_world = mat_final @ prosthetic_obj.matrix_world
-    
+
     update_scale_tracker(scale_xy, scale_z, prosthetic_obj, pros_wrist_dist, pros_palm_len)
 
     print(f"Applied Wrist-Centric Transform: Scale:(XY:{scale_xy:.2f}, Z:{scale_z:.2f})")
+    print(f"  Wrist offset: {wrist_offset_mm:.1f}mm per side ({wrist_offset_mm*2:.1f}mm total clearance)")
 
 # --- Conform_socket function ---
 def conform_socket(prosthetic_obj, scan_obj):
@@ -259,7 +271,11 @@ def run_fitting_process():
         auto_create_socket_vg(prosthetic_obj)
         landmarks = get_landmarks(scan_obj, prosthetic_obj)
         print("Found all required landmarks.")
-        calculate_and_apply_transform(prosthetic_obj, landmarks)
+
+        # Get wrist offset from scene property (default 3mm if not set)
+        wrist_offset = getattr(bpy.context.scene, 'wrist_offset_mm', 3.0)
+
+        calculate_and_apply_transform(prosthetic_obj, landmarks, wrist_offset_mm=wrist_offset)
         conform_socket(prosthetic_obj, scan_obj)
         print("\n--- Fitting Process Completed Successfully ---")
     except ValueError as e:
