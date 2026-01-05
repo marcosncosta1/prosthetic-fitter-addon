@@ -102,7 +102,7 @@ def _sync_tracker_with_prosthetic(scene, force=False):
     fy = prosthetic_obj.scale.y / by
     fz = prosthetic_obj.scale.z / bz
 
-    # Avoid churning values if nothing changed
+    
     if not force:
         if (
             abs(tracker.scale_x_factor - fx) < 1e-4
@@ -123,7 +123,7 @@ def _tracker_depsgraph_handler(scene, depsgraph):
     """Blender handler hook to keep the tracker live."""
     try:
         _sync_tracker_with_prosthetic(scene)
-    except Exception as exc:  # pragma: no cover - handler safety
+    except Exception as exc:  
         print(f"[HandFit] Tracker update failed: {exc}")
 
 
